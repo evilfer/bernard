@@ -14,7 +14,9 @@ class DriverTest extends \PHPUnit\Framework\TestCase
      */
     private $driver;
 
-    protected function setUp()
+    private $baseDir;
+
+    protected function setUp(): void
     {
         $this->baseDir = sys_get_temp_dir().\DIRECTORY_SEPARATOR.'bernard-flat';
 
@@ -25,7 +27,7 @@ class DriverTest extends \PHPUnit\Framework\TestCase
         $this->driver = new Driver($this->baseDir);
     }
 
-    protected function tearDown()
+    protected function tearDown(): void
     {
         if ((strtoupper(substr(\PHP_OS, 0, 3)) === 'WIN')) {
             system('rd /s /q '.$this->baseDir);
@@ -49,7 +51,7 @@ class DriverTest extends \PHPUnit\Framework\TestCase
 
         $this->driver->removeQueue('send-newsletter');
 
-        $this->assertDirectoryNotExists($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter');
+        $this->assertDirectoryDoesNotExist($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter');
     }
 
     public function testRemoveQueueWithPoppedMessage()
@@ -60,7 +62,7 @@ class DriverTest extends \PHPUnit\Framework\TestCase
 
         $this->driver->removeQueue('send-newsletter');
 
-        $this->assertDirectoryNotExists($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter');
+        $this->assertDirectoryDoesNotExist($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter');
     }
 
     public function testPushMessage()
@@ -92,6 +94,47 @@ class DriverTest extends \PHPUnit\Framework\TestCase
         }
     }
 
+    public function testShiftMessageFifo()
+    {
+        $this->driver = new Driver(
+            $this->baseDir,
+            0740,
+            ['queueType' => 'fifo']
+        );
+
+        $this->driver->createQueue('send-newsletter');
+
+        $this->driver->pushMessage('send-newsletter', 'job #3');
+        $this->driver->pushMessage('send-newsletter', 'job #2');
+        $this->driver->pushMessage('send-newsletter', 'job #1');
+
+        foreach (range(3, 1) as $i) {
+            list($message) = $this->driver->popMessage('send-newsletter');
+            $this->assertEquals('job #'.$i, $message);
+        }
+    }
+
+    public function testPopMessageWhichPushedAfterTheInitialCollect()
+    {
+        $this->driver->createQueue('send-newsletter');
+
+        $pid = \pcntl_fork();
+
+        if ($pid === -1) {
+            $this->fail('Failed to fork the currently running process: ' . pcntl_strerror(pcntl_get_last_error()));
+        } elseif ($pid === 0) {
+            // Child process pushes a message after the initial collect
+            sleep(5);
+            $this->driver->pushMessage('send-newsletter', 'test');
+            exit;
+        }
+
+        list($message, ) = $this->driver->popMessage('send-newsletter', 10);
+        $this->assertSame('test', $message);
+
+        pcntl_waitpid($pid, $status);
+    }
+
     public function testAcknowledgeMessage()
     {
         $this->driver->createQueue('send-newsletter');
@@ -105,7 +148,7 @@ class DriverTest extends \PHPUnit\Framework\TestCase
         $this->assertCount(0, glob($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter'.\DIRECTORY_SEPARATOR.'*.job'));
     }
 
-    public function testPeekQueue()
+    public function testPeekQueueDefaultLifo()
     {
         $this->driver->createQueue('send-newsletter');
 
@@ -113,7 +156,44 @@ class DriverTest extends \PHPUnit\Framework\TestCase
             $this->driver->pushMessage('send-newsletter', 'Job #'.$i);
         }
 
-        $this->assertCount(3, $this->driver->peekQueue('send-newsletter', 0, 3));
+        $expected = array (
+            0 => 'Job #9',
+            1 => 'Job #8',
+            2 => 'Job #7',
+        );
+
+        $actual = $this->driver->peekQueue('send-newsletter', 0, 3);
+
+        $this->assertCount(3, $actual);
+
+        $this->assertEquals($expected, $actual);
+
+        $this->assertCount(10, glob($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter'.\DIRECTORY_SEPARATOR.'*.job'));
+    }
+
+    public function testPeekQueueReverseFifo()
+    {
+        $this->driver = new Driver(
+            $this->baseDir,
+            0740,
+            ['queueType' => 'fifo']
+        );
+
+        $this->driver->createQueue('send-newsletter');
+
+        for ($i = 0; $i < 10; ++$i) {
+            $this->driver->pushMessage('send-newsletter', 'Job #'.$i);
+        }
+
+        $expected = array (
+            0 => 'Job #0',
+            1 => 'Job #1',
+            2 => 'Job #2',
+        );
+
+        $actual = $this->driver->peekQueue('send-newsletter', 0, 3);
+
+        $this->assertEquals($expected, $actual);
 
         $this->assertCount(10, glob($this->baseDir.\DIRECTORY_SEPARATOR.'send-newsletter'.\DIRECTORY_SEPARATOR.'*.job'));
     }

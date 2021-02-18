@@ -20,11 +20,11 @@ class Driver implements \Bernard\Driver
      * @param string $baseDirectory The base directory
      * @param int    $permissions   permissions to create the file with
      */
-    public function __construct($baseDirectory, $permissions = 0740, $options = null)
+    public function __construct($baseDirectory, $permissions = 0740, array $options = null)
     {
         $this->baseDirectory = $baseDirectory;
         $this->permissions = $permissions;
-        $this->queueType = isset($options['queueType']) && in_array($options['queueType'], ['lifo', 'fifo']) ? $options['queueType'] : 'lifo';
+        $this->queueType = in_array($options['queueType'] ?? [], ['lifo', 'fifo']) ? $options['queueType'] : 'lifo';
     }
 
     /**
@@ -161,7 +161,7 @@ class Driver implements \Bernard\Driver
         $files = array_keys(iterator_to_array($it));
 
         natsort($files);
-        if ($this->queueType === 'life') {
+        if ($this->queueType === 'lifo') {
             $files = array_reverse($files);
         }
 
